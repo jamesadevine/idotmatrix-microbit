@@ -5,8 +5,12 @@
         "branch": "master",
         "type": "git"
     },
-    "config":{
-        "MICROBIT_BLE_ENABLED" : 0,
-        "MICROBIT_BLE_PAIRING_MODE": 0
+    "config": {
+        "DMESG_SERIAL_DEBUG": 1,
+        "DEVICE_BLE": 1,
+        "MICROBIT_DMESG_LEVEL": "MICROBIT_DMESG_LEVEL_DEBUG",
+        "DEVICE_DMESG_BUFFER_SIZE": 1024,
+        "MICROBIT_BLE_ENABLED": 1,
+        "MICROBIT_BLE_OPEN": 1
     }
 }
