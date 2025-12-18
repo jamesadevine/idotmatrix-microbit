@@ -54,6 +54,8 @@ uint32_t calculate_crc32(const uint8_t* data, size_t length) {
 }
 
 extern "C" const uint8_t font_data[];
+extern "C" const uint32_t SEPARATOR_LEN;
+extern "C" const uint8_t separator[];
 
 // Characteristic UUIDs (128-bit)
 const uint8_t UUID_WRITE_DATA_128[] = {0xfb, 0x34, 0x9b, 0x5f, 0x80, 0x00, 0x00, 0x80,
@@ -229,7 +231,7 @@ int write_text(ManagedString s) {
     uint32_t max_packet_len = sizeof(display_buffer.pixel_data) - sizeof(TextMetadata) - sizeof(TextHeader);
     uint8_t* write_ptr = pkt->character_bitmaps;
     // const uint8_t separator[] = "\x02\xff\xff\xff";
-    const uint8_t separator[] = "\x05\xff\xff\xff";
+    // const uint8_t separator[] = "\x05\xff\xff\xff";
     const uint8_t bitmap[] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80, 0x01, 0xC0, 0x01, 0x40, 0x01, 0x40, 0x03, 0x60, 0x02, 0x20, 0x06, 0x30, 0x04, 0x10, 0x0C, 0xF0, 0x0F, 0x08, 0x08, 0x08, 0x18, 0x0C, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
     uint32_t character_bitmap_size = 0;
 
@@ -240,12 +242,10 @@ int write_text(ManagedString s) {
 
         uint32_t char_index = (uint8_t)c;
 
-        if (c>=65 && c<=90)
-            char_index -= 65;
-        else if (c>=97 && c<=122)
-            char_index = c - 97 + 26;
-        else if (c>=48 && c<=57)
-            char_index = c - 48 + 52;
+        if (c>=32 && c<=126)
+            char_index -= 32;
+        else
+            char_index = 0; // Replace unsupported characters with space
 
         uBit.serial.printf("Character index: %d\r\n", char_index);
 
@@ -258,10 +258,10 @@ int write_text(ManagedString s) {
         // }
 
         // Add separator
-        memcpy(write_ptr, separator, sizeof(separator) - 1);
-        write_ptr += sizeof(separator) - 1;
+        memcpy(write_ptr, separator, SEPARATOR_LEN);
+        write_ptr += SEPARATOR_LEN;
 
-        character_bitmap_size += sizeof(separator) - 1;
+        character_bitmap_size += SEPARATOR_LEN;
 
         memcpy(write_ptr, char_bitmap, char_bitmap_size);
         write_ptr += char_bitmap_size;
