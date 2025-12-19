@@ -11,7 +11,7 @@ from PIL import Image, ImageDraw, ImageFont
 FONT_WIDTH = 8  # 16
 FONT_HEIGHT = 16  # 32
 
-FONT_PATH = "/Users/jamesdevine/Downloads/trueno-font/TruenoLight-E2pg.otf"
+FONT_PATH = "/Users/jamesdevine/Downloads/Rain-DRM3.otf"
 
 OUTPUT_PATH = f"font-{FONT_WIDTH}x{FONT_HEIGHT}.cpp"
 
