@@ -20,6 +20,10 @@ public:
     // Convenience for test content.
     void fillTestPattern();
 
+    void clearDisplay();
+
+    void setPixel(uint8_t x, uint8_t y, uint8_t r, uint8_t g, uint8_t b);
+
     // Protocol helpers.
     int writeText(ManagedString &text);
     int setImageModeDiy();
@@ -29,8 +33,6 @@ public:
 
 private:
     MicroBit &uBit_;
-
-    uint8_t imagePixels_[32 * 32 * 3];
 
     bool uuidRegistered_;
     uint8_t uuidType_;

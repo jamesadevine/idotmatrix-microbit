@@ -11,6 +11,8 @@ extern "C" void log_string(const char *str)
     uBit.serial.printf("%s\r\n", str);
 }
 
+
+
 int main()
 {
     uBit.init();
@@ -41,6 +43,31 @@ int main()
         dotMatrix.onDisconnected();
         uBit.serial.printf("Device lost!\r\n");
         uBit.display.print('L');
+    });
+
+    uBit.messageBus.listen(MICROBIT_ID_BUTTON_A, MICROBIT_BUTTON_EVT_CLICK, [](MicroBitEvent) {
+        dotMatrix.setImageModeDiy();
+        dotMatrix.clearDisplay();
+
+        uint8_t colors[4][3] = {
+            {255, 0, 0},
+            {0, 255, 0},
+            {0, 0, 255},
+            {255, 255, 0},
+        };
+
+        for (int i = 0; i < 4; i++)
+        {
+            uint32_t col_offset = 4 + (i * 4);
+            uint32_t row_offset = 4;
+
+            for (int j =0; j < 20; j++)
+            {
+                dotMatrix.setPixel(col_offset, row_offset+j, colors[i][0], colors[i][1], colors[i][2]);
+            }
+        }
+
+        dotMatrix.writeImage();
     });
 
     uBit.bleManager.listenForDevice(ManagedString("IDM-68B955"));

@@ -156,6 +156,8 @@ struct IDotMatrixDisplay
     uint8_t pixel_data[32 * 32 * 3];
 } __attribute__((packed));
 
+static IDotMatrixDisplay display_buffer;
+
 struct TextHeader
 {
     uint16_t total_len;
@@ -187,23 +189,31 @@ struct TextMetadata
     uint8_t character_bitmaps[];
 } __attribute__((packed));
 
-const uint8_t SCOREBOARD_PACKET[] = {
-    8,  // Command start
-    0,  // Placeholder
-    10, // Command ID
-    128,
-    0,
-    0,
-    0,
-    0,
-};
+struct ScoreboardPacket
+{
+    uint8_t command_start;
+    uint8_t placeholder;
+    uint8_t command_id;
+    uint8_t command_specifier;
+    uint16_t score0;
+    uint16_t score1;
+} __attribute__((packed));
 
-const uint8_t IMAGE_MODE_PACKET[] = {
+struct ImageModePacket
+{
+    uint8_t packet_length;
+    uint8_t placeholder;
+    uint8_t command_id;
+    uint8_t mode;
+    uint8_t enable_diy;
+} __attribute__((packed));
+
+const ImageModePacket IMAGE_MODE_DDIY_ENABLE = {
     5,
     0,
     4,
     1,
-    1 % 256, // mode 1 = enable DIY
+    1, // mode 1 = enable DIY
 };
 
 constexpr uint32_t HEADER_SIZE = 9;
@@ -228,7 +238,6 @@ NRF_SDH_BLE_OBSERVER(m_dotmatrix_gattc_observer, 3, dotmatrix_gattc_event_handle
 
 DotMatrixClient::DotMatrixClient(MicroBit &uBit)
     : uBit_(uBit)
-    , imagePixels_{0}
     , uuidRegistered_(false)
     , uuidType_(0)
     , discoveryInProgress_(false)
@@ -337,6 +346,20 @@ uint32_t DotMatrixClient::calculateCrc32(const uint8_t *data, size_t length)
     return ~crc;
 }
 
+void DotMatrixClient::clearDisplay() {
+    memset(display_buffer.pixel_data, 0, sizeof(display_buffer.pixel_data));
+}
+
+void DotMatrixClient::setPixel(uint8_t x, uint8_t y, uint8_t r, uint8_t g, uint8_t b) {
+    if (x >= 32 || y >= 32)
+        return;
+
+    uint8_t *px = &display_buffer.pixel_data[(y * 32 + x) * 3];
+    px[0] = r;
+    px[1] = g;
+    px[2] = b;
+}
+
 void DotMatrixClient::handleGattcEvent(ble_evt_t const *pBleEvt)
 {
     switch (pBleEvt->header.evt_id)
@@ -388,13 +411,13 @@ void DotMatrixClient::handleGattcEvent(ble_evt_t const *pBleEvt)
 
 void DotMatrixClient::fillTestPattern()
 {
-    memset(imagePixels_, 255, sizeof(imagePixels_));
+    memset(display_buffer.pixel_data, 255, sizeof(display_buffer.pixel_data));
 
     for (int i = 0; i < 32; i++)
     {
         for (int j = 0; j < 32; j++)
         {
-            uint8_t *px = &imagePixels_[(i * 32 + j) * 3];
+            uint8_t *px = &display_buffer.pixel_data[(i * 32 + j) * 3];
             if (i % 3 == 0)
             {
                 px[0] = 255;
@@ -431,9 +454,6 @@ int DotMatrixClient::writeText(ManagedString &s)
         uBit_.serial.printf("Not connected!\r\n");
         return DEVICE_INVALID_STATE;
     }
-
-    static IDotMatrixDisplay display_buffer;
-    memset(&display_buffer.pixel_data, 0, sizeof(display_buffer.pixel_data));
 
     TextHeader *hdr = (TextHeader *)(display_buffer.pixel_data);
     hdr->total_len = 0;
@@ -535,8 +555,8 @@ int DotMatrixClient::setImageModeDiy()
     uBit_.serial.printf("Mode write queued\r\n");
     return gattc_write_req_wait(conn_handle,
                                 writeCharHandle_,
-                                IMAGE_MODE_PACKET,
-                                sizeof(IMAGE_MODE_PACKET),
+                                (const uint8_t *)&IMAGE_MODE_DDIY_ENABLE,
+                                sizeof(IMAGE_MODE_DDIY_ENABLE),
                                 uBit_,
                                 writeInProgress_,
                                 "Mode");
@@ -596,10 +616,6 @@ int DotMatrixClient::writeImage()
 
     const uint32_t pngSize = 32 * 32 * 3;
 
-    IDotMatrixDisplay display_buffer;
-    memset(&display_buffer, 0, sizeof(display_buffer));
-    memcpy(display_buffer.pixel_data, imagePixels_, sizeof(imagePixels_));
-
     display_buffer.packet_length = pngSize + HEADER_SIZE;
     display_buffer.command = 0;
     display_buffer.subcommand = 0;
@@ -640,15 +656,16 @@ int DotMatrixClient::writeScore(uint32_t score0, uint32_t score1)
         return DEVICE_INVALID_STATE;
     }
 
-    uint8_t packet[sizeof(SCOREBOARD_PACKET)];
-    memcpy(packet, SCOREBOARD_PACKET, sizeof(SCOREBOARD_PACKET));
+    ScoreboardPacket scoreboard = {
+        8,
+        0,
+        10,
+        128,
+        score0 & 0xFFFF,
+        score1 & 0xFFFF,
+    };
 
-    packet[4] = score0 & 0xFF;
-    packet[5] = (score0 >> 8) & 0xFF;
-    packet[6] = score1 & 0xFF;
-    packet[7] = (score1 >> 8) & 0xFF;
-
-    const int rc = gattc_write_req(conn_handle, writeCharHandle_, packet, sizeof(packet), uBit_, "Score");
+    int rc = gattc_write_req(conn_handle, writeCharHandle_, (const uint8_t *)&scoreboard, sizeof(scoreboard), uBit_, "Score");
     if (rc == DEVICE_OK)
         uBit_.serial.printf("Write queued\r\n");
     return rc;
