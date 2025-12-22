@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
-"""Render the 8x16 font in `source/font-8x16.cpp` as ASCII.
+"""Render the packed font in a `font-*.cpp` file as ASCII.
 
-Assumption (from repo README + common packed-font layout):
-- Each glyph is 16 bytes.
-- Each byte represents one horizontal row of 8 pixels.
-- Bit 7 is the left-most pixel, bit 0 is the right-most pixel.
+This repo contains at least two formats:
+- 8x16: `font_data[95][16]`  (16 bytes per glyph; 1 byte per row)
+- 16x32: `font_data[95][64]` (64 bytes per glyph; 2 bytes per row)
 
-If the output looks rotated/flipped, run with `--rotate`/`--lsb-left`.
+The renderer auto-detects the glyph byte width from the C++ `font_data[..][..]`
+declaration and chooses a matching geometry.
+
+If the output looks mirrored, try toggling `--lsb-left`.
+If it looks rotated, try `--rotate`.
 """
 
 from __future__ import annotations
@@ -17,14 +20,53 @@ from pathlib import Path
 from typing import Iterable, List, Sequence, Tuple
 
 
-FONT_CPP_DEFAULT = Path("font-8x16.cpp")
+def _default_font_path() -> Path:
+    candidates = [
+        Path("./source") / "font-16x32.cpp",
+        Path("./source") / "font-8x16.cpp",
+        Path("./font-16x32.cpp"),
+        Path("./font-8x16.cpp"),
+    ]
+    for p in candidates:
+        if p.exists():
+            return p
+    return candidates[0]
+
+
+FONT_CPP_DEFAULT = _default_font_path()
 FIRST_CODEPOINT = 0x20  # font_data[0] is space
-GLYPH_W = 8
-GLYPH_H = 16
 
 
-def _extract_font_rows(cpp_text: str) -> List[List[int]]:
-    """Return list of glyphs, each a list of 16 ints (0-255)."""
+class FontFormatError(ValueError):
+    pass
+
+
+def _extract_declared_glyph_byte_len(cpp_text: str) -> int:
+    """Return N from: font_data[...][N]."""
+
+    m = re.search(
+        r"font_data\s*\[\s*(\d+)\s*\]\s*\[\s*(\d+)\s*\]",
+        cpp_text,
+    )
+    if not m:
+        raise FontFormatError("Couldn't find font_data declaration")
+    return int(m.group(2))
+
+
+def _infer_geometry(glyph_bytes_len: int) -> tuple[int, int, int]:
+    """Return (width_px, height_px, bytes_per_row)."""
+
+    if glyph_bytes_len == 16:
+        return 8, 16, 1
+    if glyph_bytes_len == 64:
+        return 16, 32, 2
+    raise FontFormatError(
+        f"Unsupported glyph byte length {glyph_bytes_len}; expected 16 (8x16) or 64 (16x32)"
+    )
+
+
+def _extract_font_rows(cpp_text: str, *, glyph_bytes_len: int) -> List[List[int]]:
+    """Return list of glyphs, each a list of glyph_bytes_len ints (0-255)."""
 
     # Pull out the body of: extern "C" const uint8_t font_data[95][16] = { ... };
     m = re.search(
@@ -45,8 +87,7 @@ def _extract_font_rows(cpp_text: str) -> List[List[int]]:
         if not nums:
             continue
         values = [int(n, 0) for n in nums]
-        if len(values) != GLYPH_H:
-            # Some other brace block could match; ignore unless it looks close.
+        if len(values) != glyph_bytes_len:
             continue
         glyphs.append(values)
 
@@ -56,10 +97,19 @@ def _extract_font_rows(cpp_text: str) -> List[List[int]]:
     return glyphs
 
 
-def _byte_to_bits(b: int, *, msb_left: bool) -> List[int]:
+def _row_value_to_bits(value: int, *, width_px: int, msb_left: bool) -> List[int]:
     if msb_left:
-        return [1 if (b & (1 << (7 - i))) else 0 for i in range(GLYPH_W)]
-    return [1 if (b & (1 << i)) else 0 for i in range(GLYPH_W)]
+        return [
+            1 if (value & (1 << (width_px - 1 - i))) else 0 for i in range(width_px)
+        ]
+    return [1 if (value & (1 << i)) else 0 for i in range(width_px)]
+
+
+def _bytes_to_int(row_bytes: Sequence[int], *, endian: str) -> int:
+    b = bytes(int(x) & 0xFF for x in row_bytes)
+    if endian not in {"little", "big"}:
+        raise ValueError("endian must be 'little' or 'big'")
+    return int.from_bytes(b, endian)
 
 
 def render_glyph(
@@ -69,16 +119,32 @@ def render_glyph(
     off: str = "-",
     msb_left: bool = True,
     rotate: bool = False,
+    width_px: int,
+    height_px: int,
+    bytes_per_row: int,
+    endian: str,
 ) -> List[str]:
     """Render to list of lines."""
 
-    rows_bits = [_byte_to_bits(b, msb_left=msb_left) for b in glyph_bytes]
+    if len(glyph_bytes) != height_px * bytes_per_row:
+        raise FontFormatError(
+            f"Glyph byte length mismatch: got {len(glyph_bytes)}, expected {height_px * bytes_per_row}"
+        )
+
+    rows_bits: List[List[int]] = []
+    for row in range(height_px):
+        start = row * bytes_per_row
+        row_bytes = glyph_bytes[start : start + bytes_per_row]
+        row_value = _bytes_to_int(row_bytes, endian=endian)
+        rows_bits.append(
+            _row_value_to_bits(row_value, width_px=width_px, msb_left=msb_left)
+        )
 
     if rotate:
-        # Rotate 90deg clockwise: input is 16x8 -> output is 8x16
+        # Rotate 90deg clockwise: output becomes width x height swapped.
         rotated: List[List[int]] = []
-        for y in range(GLYPH_W):
-            rotated.append([rows_bits[GLYPH_H - 1 - x][y] for x in range(GLYPH_H)])
+        for y in range(width_px):
+            rotated.append([rows_bits[height_px - 1 - x][y] for x in range(height_px)])
         rows_bits = rotated
 
     return ["".join(on if bit else off for bit in row) for row in rows_bits]
@@ -117,12 +183,12 @@ def iter_selected_glyphs(
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Render the 8x16 font as ASCII")
+    ap = argparse.ArgumentParser(description="Render a packed font as ASCII")
     ap.add_argument(
         "--font",
         type=Path,
         default=FONT_CPP_DEFAULT,
-        help="Path to C++ font file (default: source/font-8x16.cpp)",
+        help="Path to C++ font file (default: tries source/font-16x32.cpp then source/font-8x16.cpp)",
     )
     ap.add_argument(
         "--select",
@@ -140,10 +206,42 @@ def main() -> int:
         action="store_true",
         help="Rotate output 90° clockwise (useful if the bit packing assumption is flipped)",
     )
+    ap.add_argument(
+        "--width",
+        type=int,
+        help="Override glyph width in pixels (normally auto-detected)",
+    )
+    ap.add_argument(
+        "--height",
+        type=int,
+        help="Override glyph height in pixels (normally auto-detected)",
+    )
+    ap.add_argument(
+        "--endian",
+        choices=["little", "big"],
+        default=None,
+        help="Byte order for multi-byte rows (16x32 is typically little-endian). Defaults per auto-detected format.",
+    )
     args = ap.parse_args()
 
+    print(f"Rendering font from: {args.font} (exists={args.font.exists()})")
+
     cpp_text = args.font.read_text(encoding="utf-8", errors="replace")
-    glyphs = _extract_font_rows(cpp_text)
+    declared_glyph_bytes_len = _extract_declared_glyph_byte_len(cpp_text)
+    auto_w, auto_h, auto_bpr = _infer_geometry(declared_glyph_bytes_len)
+
+    width_px = args.width if args.width is not None else auto_w
+    height_px = args.height if args.height is not None else auto_h
+    if declared_glyph_bytes_len % height_px != 0:
+        raise FontFormatError(
+            f"Glyph byte length {declared_glyph_bytes_len} is not divisible by height {height_px}"
+        )
+    bytes_per_row = declared_glyph_bytes_len // height_px
+    endian = args.endian
+    if endian is None:
+        endian = "big" if bytes_per_row == 1 else "little"
+
+    glyphs = _extract_font_rows(cpp_text, glyph_bytes_len=declared_glyph_bytes_len)
 
     for idx, glyph in iter_selected_glyphs(glyphs, args.select):
         codepoint = idx + FIRST_CODEPOINT
@@ -160,6 +258,10 @@ def main() -> int:
             off=args.off,
             msb_left=(not args.lsb_left),
             rotate=args.rotate,
+            width_px=width_px,
+            height_px=height_px,
+            bytes_per_row=bytes_per_row,
+            endian=endian,
         )
         print("\n".join(lines))
         print()

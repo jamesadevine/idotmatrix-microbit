@@ -54,6 +54,7 @@ uint32_t calculate_crc32(const uint8_t* data, size_t length) {
 }
 
 extern "C" const uint8_t font_data[];
+extern "C" const uint32_t BITMAP_SIZE;
 extern "C" const uint32_t SEPARATOR_LEN;
 extern "C" const uint8_t separator[];
 
@@ -217,7 +218,7 @@ int write_text(ManagedString s) {
     pkt->number_of_characters = s.length();
     pkt->static_0 = 0;
     pkt->static_1 = 1;
-    pkt->text_mode = 0;
+    pkt->text_mode = 7;
     pkt->text_speed = 95;
     pkt->text_color_mode = 1;
     pkt->text_color_r = 255;
@@ -232,7 +233,7 @@ int write_text(ManagedString s) {
     uint8_t* write_ptr = pkt->character_bitmaps;
     // const uint8_t separator[] = "\x02\xff\xff\xff";
     // const uint8_t separator[] = "\x05\xff\xff\xff";
-    const uint8_t bitmap[] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80, 0x01, 0xC0, 0x01, 0x40, 0x01, 0x40, 0x03, 0x60, 0x02, 0x20, 0x06, 0x30, 0x04, 0x10, 0x0C, 0xF0, 0x0F, 0x08, 0x08, 0x08, 0x18, 0x0C, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+    // const uint8_t bitmap[] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80, 0x01, 0xC0, 0x01, 0x40, 0x01, 0x40, 0x03, 0x60, 0x02, 0x20, 0x06, 0x30, 0x04, 0x10, 0x0C, 0xF0, 0x0F, 0x08, 0x08, 0x08, 0x18, 0x0C, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
     uint32_t character_bitmap_size = 0;
 
     for (int i = 0; i < s.length(); i++) {
@@ -249,24 +250,16 @@ int write_text(ManagedString s) {
 
         uBit.serial.printf("Character index: %d\r\n", char_index);
 
-        const uint8_t* char_bitmap = &bitmap[0];
-        uint32_t char_bitmap_size = 64; // 8x16 font
-
-        // if ((write_ptr + char_bitmap_size) - (uint8_t*)hdr > max_packet_len) {
-        //     uBit.serial.printf("Text too long to fit in packet\r\n");
-        //     break;
-        // }
-
         // Add separator
         memcpy(write_ptr, separator, SEPARATOR_LEN);
         write_ptr += SEPARATOR_LEN;
 
         character_bitmap_size += SEPARATOR_LEN;
 
-        memcpy(write_ptr, char_bitmap, char_bitmap_size);
-        write_ptr += char_bitmap_size;
+        memcpy(write_ptr, &font_data[char_index * BITMAP_SIZE], BITMAP_SIZE);
+        write_ptr += BITMAP_SIZE;
 
-        character_bitmap_size += char_bitmap_size;
+        character_bitmap_size += BITMAP_SIZE;
     }
 
     size_t payload_size =  sizeof(TextMetadata) + character_bitmap_size;
@@ -676,7 +669,7 @@ int main()
         uBit.display.print('L');
     });
 
-    uBit.bleManager.listenForDevice(ManagedString("IDM-882E03"));
+    uBit.bleManager.listenForDevice(ManagedString("IDM-68B955"));
 
 
     while (true)
@@ -684,7 +677,11 @@ int main()
         if (connected && write_char_handle != BLE_GATT_HANDLE_INVALID)
         {
             uBit.serial.printf("Writing image...\r\n");
-            write_text("A");
+
+            ManagedString s = ManagedString("Hello, World!");
+
+            write_text(s);
+            uBit.sleep(1520*s.length()); // 95 * width of each character
             // set_mode();
             // write_image(display_buffer.pixel_data, sizeof(display_buffer.pixel_data));
         }

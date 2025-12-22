@@ -8,8 +8,8 @@
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 
-FONT_WIDTH = 8  # 16
-FONT_HEIGHT = 16  # 32
+FONT_WIDTH = 16  # 16
+FONT_HEIGHT = 32  # 32
 
 FONT_PATH = "/Users/jamesdevine/Downloads/Rain-DRM3.otf"
 
@@ -35,6 +35,7 @@ write_handle.write("// Separator bytes between characters\n")
 
 
 if FONT_WIDTH == 8 and FONT_HEIGHT == 16:
+    write_handle.write('extern "C" const uint32_t BITMAP_SIZE = 16;\n')
     write_handle.write(
         f'extern "C" const uint32_t SEPARATOR_LEN = {len(SEPARATOR_8_16)};\n'
     )
@@ -43,6 +44,7 @@ if FONT_WIDTH == 8 and FONT_HEIGHT == 16:
     )
     separator = SEPARATOR_8_16
 elif FONT_WIDTH == 16 and FONT_HEIGHT == 32:
+    write_handle.write('extern "C" const uint32_t BITMAP_SIZE = 64;\n')
     write_handle.write(
         f'extern "C" const uint32_t SEPARATOR_LEN = {len(SEPARATOR_16_32)};\n'
     )
