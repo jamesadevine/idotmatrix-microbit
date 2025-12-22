@@ -20,6 +20,96 @@ static inline uint32_t min_u32(uint32_t a, uint32_t b)
     return a < b ? a : b;
 }
 
+static int gattc_write_cmd_chunks(uint16_t conn_handle,
+                                 uint16_t value_handle,
+                                 uint32_t chunk_size,
+                                 const uint8_t *data,
+                                 uint32_t data_size,
+                                 MicroBit &uBit,
+                                 const char *label)
+{
+    const uint8_t *dataPtr = data;
+    uint32_t remaining = data_size;
+
+    while (remaining > 0)
+    {
+        ble_gattc_write_params_t params;
+        memset(&params, 0, sizeof(params));
+        params.write_op = BLE_GATT_OP_WRITE_CMD;
+        params.handle = value_handle;
+
+        const uint32_t chunk = min_u32(chunk_size, remaining);
+        params.len = chunk;
+        params.p_value = (uint8_t *)dataPtr;
+        params.offset = 0;
+
+        uint32_t err;
+        do
+        {
+            err = sd_ble_gattc_write(conn_handle, &params);
+            if (err == NRF_ERROR_RESOURCES)
+                fiber_sleep(1);
+            else if (err != NRF_SUCCESS)
+            {
+                uBit.serial.printf("%s write failed: 0x%lx\r\n", label, err);
+                return DEVICE_INVALID_STATE;
+            }
+        } while (err == NRF_ERROR_RESOURCES);
+
+        dataPtr += chunk;
+        remaining -= chunk;
+    }
+
+    return DEVICE_OK;
+}
+
+static int gattc_write_req(uint16_t conn_handle,
+                           uint16_t value_handle,
+                           const uint8_t *data,
+                           uint16_t data_len,
+                           MicroBit &uBit,
+                           const char *label)
+{
+    ble_gattc_write_params_t params;
+    memset(&params, 0, sizeof(params));
+    params.write_op = BLE_GATT_OP_WRITE_REQ;
+    params.handle = value_handle;
+    params.len = data_len;
+    params.p_value = (uint8_t *)data;
+    params.offset = 0;
+
+    const uint32_t err = sd_ble_gattc_write(conn_handle, &params);
+    if (err != NRF_SUCCESS)
+    {
+        uBit.serial.printf("%s write failed: 0x%lx\r\n", label, err);
+        return DEVICE_INVALID_STATE;
+    }
+
+    return DEVICE_OK;
+}
+
+static int gattc_write_req_wait(uint16_t conn_handle,
+                                uint16_t value_handle,
+                                const uint8_t *data,
+                                uint16_t data_len,
+                                MicroBit &uBit,
+                                volatile bool &write_in_progress,
+                                const char *label)
+{
+    write_in_progress = true;
+    const int rc = gattc_write_req(conn_handle, value_handle, data, data_len, uBit, label);
+    if (rc != DEVICE_OK)
+    {
+        write_in_progress = false;
+        return rc;
+    }
+
+    while (write_in_progress)
+        fiber_sleep(1);
+
+    return DEVICE_OK;
+}
+
 // CRC32 lookup table (IEEE 802.3 polynomial: 0xEDB88320)
 static const uint32_t crc32_table[256] = {
     0x00000000, 0x77073096, 0xee0e612c, 0x990951ba, 0x076dc419, 0x706af48f, 0xe963a535, 0x9e6495a3,
@@ -413,34 +503,15 @@ int DotMatrixClient::writeText(ManagedString &s)
 
     uBit_.serial.printf("Starting image write of %d bytes\r\n", dataSize);
 
-    while (dataSize > 0)
-    {
-        ble_gattc_write_params_t params;
-        memset(&params, 0, sizeof(params));
-        params.write_op = BLE_GATT_OP_WRITE_CMD;
-        params.handle = writeCharHandle_;
-
-        const uint32_t chunk = min_u32(chunkSize_, dataSize);
-        params.len = chunk;
-        params.p_value = (uint8_t *)dataPtr;
-        params.offset = 0;
-
-        uint32_t err;
-        do
-        {
-            err = sd_ble_gattc_write(conn_handle, &params);
-            if (err == NRF_ERROR_RESOURCES)
-                fiber_sleep(1);
-            else if (err != NRF_SUCCESS)
-            {
-                uBit_.serial.printf("Image write failed: 0x%x\r\n", err);
-                return DEVICE_INVALID_STATE;
-            }
-        } while (err == NRF_ERROR_RESOURCES);
-
-        dataPtr += chunk;
-        dataSize -= chunk;
-    }
+    const int rc = gattc_write_cmd_chunks(conn_handle,
+                                         writeCharHandle_,
+                                         chunkSize_,
+                                         dataPtr,
+                                         dataSize,
+                                         uBit_,
+                                         "Text");
+    if (rc != DEVICE_OK)
+        return rc;
 
     uBit_.serial.printf("Image write complete\r\n");
     return DEVICE_OK;
@@ -461,27 +532,14 @@ int DotMatrixClient::setImageModeDiy()
         return DEVICE_INVALID_STATE;
     }
 
-    ble_gattc_write_params_t params;
-    memset(&params, 0, sizeof(params));
-    params.write_op = BLE_GATT_OP_WRITE_REQ;
-    params.handle = writeCharHandle_;
-    params.len = sizeof(IMAGE_MODE_PACKET);
-    params.p_value = (uint8_t *)IMAGE_MODE_PACKET;
-    params.offset = 0;
-
-    writeInProgress_ = true;
-    const uint32_t err = sd_ble_gattc_write(conn_handle, &params);
-    if (err != NRF_SUCCESS)
-    {
-        uBit_.serial.printf("Mode write failed: 0x%lx\r\n", err);
-        return DEVICE_INVALID_STATE;
-    }
-
     uBit_.serial.printf("Mode write queued\r\n");
-    while (writeInProgress_)
-        fiber_sleep(1);
-
-    return DEVICE_OK;
+    return gattc_write_req_wait(conn_handle,
+                                writeCharHandle_,
+                                IMAGE_MODE_PACKET,
+                                sizeof(IMAGE_MODE_PACKET),
+                                uBit_,
+                                writeInProgress_,
+                                "Mode");
 }
 
 int DotMatrixClient::writePixel(uint8_t x, uint8_t y, uint8_t r, uint8_t g, uint8_t b)
@@ -512,26 +570,13 @@ int DotMatrixClient::writePixel(uint8_t x, uint8_t y, uint8_t r, uint8_t g, uint
         y,
     };
 
-    ble_gattc_write_params_t params;
-    memset(&params, 0, sizeof(params));
-    params.write_op = BLE_GATT_OP_WRITE_REQ;
-    params.handle = writeCharHandle_;
-    params.len = sizeof(set_pixel_buffer);
-    params.p_value = (uint8_t *)set_pixel_buffer;
-    params.offset = 0;
-
-    writeInProgress_ = true;
-    const uint32_t err = sd_ble_gattc_write(conn_handle, &params);
-    if (err != NRF_SUCCESS)
-    {
-        uBit_.serial.printf("Pixel write failed: 0x%lx\r\n", err);
-        return DEVICE_INVALID_STATE;
-    }
-
-    while (writeInProgress_)
-        fiber_sleep(1);
-
-    return DEVICE_OK;
+    return gattc_write_req_wait(conn_handle,
+                                writeCharHandle_,
+                                set_pixel_buffer,
+                                sizeof(set_pixel_buffer),
+                                uBit_,
+                                writeInProgress_,
+                                "Pixel");
 }
 
 int DotMatrixClient::writeImage()
@@ -566,34 +611,15 @@ int DotMatrixClient::writeImage()
 
     uBit_.serial.printf("Starting image write of %d bytes\r\n", pngSize + HEADER_SIZE);
 
-    while (dataSize > 0)
-    {
-        ble_gattc_write_params_t params;
-        memset(&params, 0, sizeof(params));
-        params.write_op = BLE_GATT_OP_WRITE_CMD;
-        params.handle = writeCharHandle_;
-
-        const uint32_t chunk = min_u32(chunkSize_, dataSize);
-        params.len = chunk;
-        params.p_value = (uint8_t *)pngPtr;
-        params.offset = 0;
-
-        uint32_t err;
-        do
-        {
-            err = sd_ble_gattc_write(conn_handle, &params);
-            if (err == NRF_ERROR_RESOURCES)
-                fiber_sleep(1);
-            else if (err != NRF_SUCCESS)
-            {
-                uBit_.serial.printf("Image write failed: 0x%x\r\n", err);
-                return DEVICE_INVALID_STATE;
-            }
-        } while (err == NRF_ERROR_RESOURCES);
-
-        pngPtr += chunk;
-        dataSize -= chunk;
-    }
+    const int rc = gattc_write_cmd_chunks(conn_handle,
+                                         writeCharHandle_,
+                                         chunkSize_,
+                                         pngPtr,
+                                         dataSize,
+                                         uBit_,
+                                         "Image");
+    if (rc != DEVICE_OK)
+        return rc;
 
     uBit_.serial.printf("Image write complete\r\n");
     return DEVICE_OK;
@@ -622,21 +648,8 @@ int DotMatrixClient::writeScore(uint32_t score0, uint32_t score1)
     packet[6] = score1 & 0xFF;
     packet[7] = (score1 >> 8) & 0xFF;
 
-    ble_gattc_write_params_t params;
-    memset(&params, 0, sizeof(params));
-    params.write_op = BLE_GATT_OP_WRITE_REQ;
-    params.handle = writeCharHandle_;
-    params.len = sizeof(packet);
-    params.p_value = packet;
-    params.offset = 0;
-
-    const uint32_t err = sd_ble_gattc_write(conn_handle, &params);
-    if (err == NRF_SUCCESS)
-    {
+    const int rc = gattc_write_req(conn_handle, writeCharHandle_, packet, sizeof(packet), uBit_, "Score");
+    if (rc == DEVICE_OK)
         uBit_.serial.printf("Write queued\r\n");
-        return DEVICE_OK;
-    }
-
-    uBit_.serial.printf("Write failed: 0x%lx\r\n", err);
-    return DEVICE_INVALID_STATE;
+    return rc;
 }
