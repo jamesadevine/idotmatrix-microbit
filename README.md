@@ -1,5 +1,13 @@
 # Dot matrix app
 
+References:
+
+* https://github.com/derkalle4/python3-idotmatrix-library/tree/main
+* https://github.com/markusressel/idotmatrix-api-client/tree/main/idotmatrix/modules
+* https://github.com/8none1/idotmatrix/tree/main
+
+
+
 # writing character bitmaps
 
 * Each byte is a vertical column of 8 pixels.
